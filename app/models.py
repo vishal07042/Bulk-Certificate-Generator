@@ -27,10 +27,6 @@ class Job(Base):
     issued_on: Mapped[Date] = mapped_column(Date, nullable=False)  # type: ignore[assignment]
     issuer: Mapped[str] = mapped_column(String(300), default="", nullable=False)
     total: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    idempotency_key: Mapped[str | None] = mapped_column(
-        String(128), unique=True, nullable=True
-    )
-    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

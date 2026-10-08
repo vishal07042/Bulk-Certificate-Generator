@@ -85,8 +85,7 @@ Coverage (required + extras):
 4. Status/progress: counts + per-row results + pagination
 5. Individual failure: monkeypatched generator raises for one recipient
 6. Retrieval: single PDF, ZIP, 404 unknown, 409 failed cert
-7. Idempotency: replay 200 same job, mismatched body 409
-8. Startup recovery: stale `processing` rows marked `failed`
+7. Startup recovery: stale `processing` rows marked `failed`
 
 ## Submit a certificate generation request
 
@@ -95,7 +94,6 @@ All API routes under `/api/v1`.
 ```bash
 curl -X POST http://localhost:8000/api/v1/jobs \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: my-unique-key-1" \
   -d '{
     "title": "Intro to Python",
     "issued_on": "2026-10-01",
@@ -107,7 +105,7 @@ curl -X POST http://localhost:8000/api/v1/jobs \
   }'
 ```
 
-Success: `202 Accepted` (new job) or `200 OK` (idempotent replay).
+Success: `202 Accepted` with the new job.
 
 ```json
 {
@@ -139,9 +137,8 @@ curl -O "http://localhost:8000/api/v1/jobs/<job_id>/certificates/<cert_id>"
 curl -O "http://localhost:8000/api/v1/jobs/<job_id>/download"
 ```
 
-Status codes: `202` accepted, `200` idempotent replay, `404` unknown
-job/cert, `409` same idempotency key with different body _or_ downloading a
-cert that is not `succeeded`, `422` request-level validation failure.
+Status codes: `202` accepted, `404` unknown job/cert, `409` downloading a
+certificate that is not `succeeded`, `422` request-level validation failure.
 
 Job states: `pending → processing → completed | completed_with_errors | failed`
 (`completed` = all succeeded, `completed_with_errors` = some failed,
@@ -162,10 +159,6 @@ Certificate states: `pending → processing → succeeded | failed`.
   Celery/durable queue + S3 + separate workers (documented in `designdoc.md`).
 - **Task is plain `def`** (threadpool): PDF rendering is CPU-bound and must
   not block the event loop; it opens its own DB session.
-- **Idempotency-Key (extra):** `Idempotency-Key` header + SHA-256 of
-  canonicalised body under a unique constraint, insert-then-catch
-  `IntegrityError` so concurrent retries can't duplicate. Same key + same
-  body → `200` existing job; same key + different body → `409`.
 - **Single ReportLab landscape-A4 template:** title, `awarded to {name}`,
   issuer, issue date, certificate UUID as verifiable reference. Filenames use
   the certificate id only, never user input; names are length-capped and

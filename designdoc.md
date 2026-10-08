@@ -25,7 +25,7 @@ All routes under `/api/v1`.
 
 | Method | Path | Purpose | Success |
 |---|---|---|---|
-| POST | `/jobs` | Submit a bulk request. Optional `Idempotency-Key` header | 202 + job (200 on idempotent replay) |
+| POST | `/jobs` | Submit a bulk request | 202 + job |
 | GET | `/jobs/{job_id}` | Status, counts, paginated per-certificate results | 200 |
 | GET | `/jobs/{job_id}/certificates/{cert_id}` | Download one PDF | 200 `application/pdf` |
 | GET | `/jobs/{job_id}/download` | ZIP of all successful PDFs (extra) | 200 `application/zip` |
@@ -57,10 +57,10 @@ All routes under `/api/v1`.
 ```
 
 ### Status codes
-- 202 accepted, 200 idempotent replay, 404 unknown job/cert, 409 same idempotency key with a different body, or downloading a cert that is not `succeeded`, 422 request-level validation failure.
+- 202 accepted, 404 unknown job/cert, 409 downloading a cert that is not `succeeded`, 422 request-level validation failure.
 
 ## 4. Data model
-**jobs**: `id (uuid)`, `status`, `title`, `issued_on`, `issuer`, `total`, `idempotency_key (unique, nullable)`, `request_hash`, `created_at`, `finished_at`
+**jobs**: `id (uuid)`, `status`, `title`, `issued_on`, `issuer`, `total`, `created_at`, `finished_at`
 
 **certificates**: `id (uuid)`, `job_id (fk, indexed)`, `recipient_name`, `recipient_email`, `status`, `file_path`, `error`, `created_at`, `finished_at`
 
@@ -96,14 +96,8 @@ Two levels:
 
 Names are length-capped and control characters stripped. Filenames never use user input; they use the certificate id.
 
-## 7. Idempotency (extra, in scope by decision)
-Not required by the assignment; added so client retries are safe.
-- Client sends `Idempotency-Key` on `POST /jobs`. Stored on the job with a SHA-256 of the canonicalised body, under a unique constraint.
-- Same key + same body: return the existing job (200), create nothing.
-- Same key + different body: 409.
-- Implemented as insert-then-catch-`IntegrityError`, not check-then-insert, so concurrent retries cannot create duplicates.
-- No header: a new job every time.
-- Worker-level safety: output path is deterministic (`{job_id}/{cert_id}.pdf`), written to a temp file then atomically renamed, so a retry overwrites rather than duplicates and a crash never leaves a half-written file.
+## 7. Retries and file safety
+Deterministic output path (`{job_id}/{cert_id}.pdf`), written to a temp file then atomically renamed, so a retry overwrites rather than duplicates and a crash never leaves a half-written file.
 
 Not done: de-duplicating identical recipients within one request. Each row is its own certificate. Documented.
 
@@ -120,8 +114,7 @@ Tests cover the six required areas plus the extras:
 4. Status/progress: counts and per-row results, pagination
 5. Individual failure: monkeypatch the generator to raise for one recipient; others succeed, job ends `completed_with_errors`
 6. Retrieval: single PDF, ZIP, 404 for unknown, 409 for failed cert
-7. Idempotency: replay returns same job, mismatched body returns 409
-8. Startup recovery: stale `processing` rows get marked `failed`
+7. Startup recovery: stale `processing` rows get marked `failed`
 
 Tests default to SQLite in-memory via dependency override. CI runs the same suite against a Postgres service container.
 
@@ -158,6 +151,5 @@ Each checkpoint leaves the repo runnable, tests green, one commit.
 | 7 | `feat: background processing` | BackgroundTasks task, per-item failure handling, finalization, failure test |
 | 8 | `feat: status endpoint` | `GET /jobs/{id}`, counts, pagination, tests |
 | 9 | `feat: retrieval endpoints` | Single PDF, ZIP, 404/409 cases, tests |
-| 10 | `feat: idempotency key` | Header handling, hash, 409 case, tests |
-| 11 | `feat: startup recovery` | Stale-row recovery hook, test |
-| 12 | `docs: readme` | Setup, run, test, submit, retrieve, design decisions |
+| 10 | `feat: startup recovery` | Stale-row recovery hook, test |
+| 11 | `docs: readme` | Setup, run, test, submit, retrieve, design decisions |

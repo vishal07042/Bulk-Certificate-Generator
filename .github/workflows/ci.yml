@@ -35,6 +35,7 @@ jobs:
       - name: Test (Postgres)
         env:
           DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/certs
+          TEST_DATABASE_URL: postgresql+psycopg2://postgres:postgres@localhost:5432/certs_test
           CERT_DIR: ./data/certificates
         run: python -m pytest -q
       - name: Docker build

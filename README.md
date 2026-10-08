@@ -10,7 +10,7 @@ One failing certificate never blocks the others.
 ## Stack
 
 - Python 3.12, FastAPI (auto Swagger at `/docs`, ReDoc at `/redoc`)
-- PostgreSQL 16 via Docker Compose; SQLite for local dev/tests (`DATABASE_URL`)
+- PostgreSQL 16 only (Docker Compose for dev/review, same engine for tests)
 - SQLAlchemy 2.0, `create_all` on startup (Alembic listed as next step)
 - ReportLab + TTF font for PDFs (no system deps beyond `fonts-dejavu-core` in Docker)
 - `BackgroundTasks` for processing (see design decision below)
@@ -36,11 +36,8 @@ MAX_RECIPIENTS=1000
 LOG_LEVEL=INFO
 ```
 
-For local dev without Postgres, use SQLite:
-
-```
-DATABASE_URL=sqlite:///./data.db
-```
+Postgres is required. Start it with Compose (`docker compose up db`) or point
+`DATABASE_URL` at your own Postgres 16. SQLite URLs are rejected.
 
 ## Run the application
 
@@ -75,8 +72,10 @@ python -m pytest -q
 python -m ruff check app tests
 ```
 
-Tests default to SQLite in-memory via dependency override.
-CI runs the same suite against a Postgres service container, then `ruff` and `docker build`.
+Tests run against PostgreSQL (`TEST_DATABASE_URL`, default
+`postgresql+psycopg2://postgres:postgres@localhost:5432/certs_test`; the test
+database is auto-created). CI runs the same suite against a Postgres service
+container, then `ruff` and `docker build`.
 
 Coverage (required + extras):
 

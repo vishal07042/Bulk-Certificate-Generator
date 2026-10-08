@@ -9,8 +9,8 @@ class Base(DeclarativeBase):
 
 
 def _make_engine(url: str):
-    if url.startswith("sqlite"):
-        return create_engine(url, connect_args={"check_same_thread": False})
+    if not url.startswith("postgresql"):
+        raise ValueError("PostgreSQL only: DATABASE_URL must start with postgresql")
     return create_engine(url, pool_pre_ping=True)
 
 

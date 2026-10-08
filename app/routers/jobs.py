@@ -1,13 +1,25 @@
+import hashlib
 import io
+import json
 import os
 import re
 import uuid
 import zipfile
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Query,
+    Response,
+)
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -118,7 +130,9 @@ def get_counts(db: Session, job_id: str) -> tuple[int, int]:
 def create_job(
     payload: JobCreate,
     background_tasks: BackgroundTasks,
+    response: Response,
     db: Session = Depends(get_db),
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ):
     if len(payload.recipients) == 0:
         raise HTTPException(status_code=422, detail="recipients must not be empty")
@@ -127,6 +141,32 @@ def create_job(
             status_code=422,
             detail=f"too many recipients (max {settings.MAX_RECIPIENTS})",
         )
+
+    canonical = json.dumps(payload.model_dump(mode="json"), sort_keys=True)
+    request_hash = hashlib.sha256(canonical.encode()).hexdigest()
+    key = (idempotency_key or "").strip() or None
+
+    if key is not None:
+        existing = db.scalars(
+            select(Job).where(Job.idempotency_key == key)
+        ).first()
+        if existing is not None:
+            if existing.request_hash != request_hash:
+                raise HTTPException(
+                    status_code=409,
+                    detail="idempotency key already used with a different body",
+                )
+            response.status_code = 200
+            certs = list(
+                db.scalars(
+                    select(Certificate)
+                    .where(Certificate.job_id == existing.id)
+                    .order_by(Certificate.created_at, Certificate.id)
+                ).all()
+            )
+            return build_job_out(
+                existing, certs, page=1, page_size=len(certs) or 1
+            )
 
     job_id = str(uuid.uuid4())
     now = datetime.utcnow()
@@ -138,6 +178,8 @@ def create_job(
         issuer=(payload.issuer or "").strip(),
         total=len(payload.recipients),
         created_at=now,
+        idempotency_key=key,
+        request_hash=request_hash if key is not None else None,
     )
     db.add(job)
 
@@ -165,7 +207,31 @@ def create_job(
         db.add(cert)
         cert_rows.append(cert)
 
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Concurrent retry with the same key: don't create duplicates.
+        db.rollback()
+        existing = db.scalars(
+            select(Job).where(Job.idempotency_key == key)
+        ).first()
+        if existing is None:
+            raise
+        if existing.request_hash != request_hash:
+            raise HTTPException(
+                status_code=409,
+                detail="idempotency key already used with a different body",
+            )
+        response.status_code = 200
+        certs = list(
+            db.scalars(
+                select(Certificate)
+                .where(Certificate.job_id == existing.id)
+                .order_by(Certificate.created_at, Certificate.id)
+            ).all()
+        )
+        return build_job_out(existing, certs, page=1, page_size=len(certs) or 1)
+
     for c in cert_rows:
         db.refresh(c)
     db.refresh(job)

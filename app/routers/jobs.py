@@ -2,7 +2,7 @@ import re
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -80,7 +80,11 @@ def certs_all(job: Job, certs: list[Certificate]) -> list[Certificate]:
 
 
 @router.post("/jobs", status_code=202, response_model=JobOut)
-def create_job(payload: JobCreate, db: Session = Depends(get_db)):
+def create_job(
+    payload: JobCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     if len(payload.recipients) == 0:
         raise HTTPException(status_code=422, detail="recipients must not be empty")
     if len(payload.recipients) > settings.MAX_RECIPIENTS:
@@ -130,5 +134,12 @@ def create_job(payload: JobCreate, db: Session = Depends(get_db)):
     for c in cert_rows:
         db.refresh(c)
     db.refresh(job)
+
+    from app.services.jobs import process_job_sync
+
+    # Schedules threaded background work and returns 202 immediately.
+    # The response snapshot is built from the just-committed rows (pending),
+    # progress is polled via GET /jobs/{id}.
+    background_tasks.add_task(process_job_sync, job_id)
 
     return build_job_out(job, cert_rows, page=1, page_size=len(cert_rows))

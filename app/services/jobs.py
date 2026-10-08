@@ -103,9 +103,12 @@ def process_job_sync(job_id: str) -> None:
         db.close()
 
 
-def recover_stale_jobs() -> dict:
+def recover_stale_jobs(db=None) -> dict:
     """Startup recovery: stale pending/processing rows can never be left hanging."""
-    db = SessionLocal()
+    close = False
+    if db is None:
+        db = SessionLocal()
+        close = True
     try:
         stale = db.scalars(
             select(Certificate).where(Certificate.status.in_(["pending", "processing"]))
@@ -129,4 +132,5 @@ def recover_stale_jobs() -> dict:
             "recovered_jobs": recovered_jobs,
         }
     finally:
-        db.close()
+        if close:
+            db.close()

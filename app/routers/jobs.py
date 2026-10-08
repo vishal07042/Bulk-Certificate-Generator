@@ -1,8 +1,12 @@
+import io
+import os
 import re
 import uuid
+import zipfile
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -198,3 +202,51 @@ def get_job(
         ).all()
     )
     return build_job_out_paged(job, page_certs, succeeded, failed, page, page_size)
+
+
+@router.get("/jobs/{job_id}/certificates/{cert_id}")
+def download_certificate(job_id: str, cert_id: str, db: Session = Depends(get_db)):
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    cert = db.get(Certificate, cert_id)
+    if cert is None or cert.job_id != job_id:
+        raise HTTPException(status_code=404, detail="certificate not found")
+    if cert.status != "succeeded":
+        raise HTTPException(
+            status_code=409, detail=f"certificate is {cert.status}, not available"
+        )
+    if not cert.file_path or not os.path.exists(cert.file_path):
+        raise HTTPException(status_code=404, detail="certificate file missing")
+    return FileResponse(
+        cert.file_path,
+        media_type="application/pdf",
+        filename=f"{cert.id}.pdf",
+    )
+
+
+@router.get("/jobs/{job_id}/download")
+def download_zip(job_id: str, db: Session = Depends(get_db)):
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    certs = list(
+        db.scalars(
+            select(Certificate).where(
+                Certificate.job_id == job_id, Certificate.status == "succeeded"
+            )
+        ).all()
+    )
+    if not certs:
+        raise HTTPException(
+            status_code=409, detail="no succeeded certificates to download"
+        )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for cert in certs:
+            if cert.file_path and os.path.exists(cert.file_path):
+                # Filename uses the certificate id only, never user input.
+                zf.write(cert.file_path, arcname=f"{cert.id}.pdf")
+    buf.seek(0)
+    headers = {"Content-Disposition": f'attachment; filename="{job_id}.zip"'}
+    return StreamingResponse(buf, media_type="application/zip", headers=headers)

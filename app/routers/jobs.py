@@ -2,7 +2,8 @@ import re
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -54,11 +55,8 @@ def certificate_to_out(job_id: str, cert: Certificate) -> CertificateOut:
 def build_job_out(
     job: Job, certs: list[Certificate], page: int = 1, page_size: int = 50
 ) -> JobOut:
-    succeeded = sum(1 for c in certs_all(job, certs) if c.status == "succeeded")
-    failed = sum(1 for c in certs_all(job, certs) if c.status == "failed")
-    # counts are computed over ALL certs of the job; `certs` here may be a page,
-    # so callers that pass a page must also pass full counts. To keep one helper,
-    # we accept full list; pagination slices afterwards.
+    succeeded = sum(1 for c in certs if c.status == "succeeded")
+    failed = sum(1 for c in certs if c.status == "failed")
     return JobOut(
         id=job.id,
         status=job.status,
@@ -75,8 +73,41 @@ def build_job_out(
     )
 
 
-def certs_all(job: Job, certs: list[Certificate]) -> list[Certificate]:
-    return certs
+def build_job_out_paged(
+    job: Job,
+    page_certs: list[Certificate],
+    succeeded: int,
+    failed: int,
+    page: int,
+    page_size: int,
+) -> JobOut:
+    return JobOut(
+        id=job.id,
+        status=job.status,
+        title=job.title,
+        issued_on=job.issued_on,
+        issuer=job.issuer or "",
+        total=job.total,
+        succeeded=succeeded,
+        failed=failed,
+        pending=job.total - succeeded - failed,
+        page=page,
+        page_size=page_size,
+        certificates=[certificate_to_out(job.id, c) for c in page_certs],
+    )
+
+
+def get_counts(db: Session, job_id: str) -> tuple[int, int]:
+    """Counts computed from certificate rows (GROUP BY), never stored."""
+    from sqlalchemy import func, select
+
+    rows = db.execute(
+        select(Certificate.status, func.count())
+        .where(Certificate.job_id == job_id)
+        .group_by(Certificate.status)
+    ).all()
+    mapping = {status: count for status, count in rows}
+    return mapping.get("succeeded", 0), mapping.get("failed", 0)
 
 
 @router.post("/jobs", status_code=202, response_model=JobOut)
@@ -143,3 +174,27 @@ def create_job(
     background_tasks.add_task(process_job_sync, job_id)
 
     return build_job_out(job, cert_rows, page=1, page_size=len(cert_rows))
+
+
+@router.get("/jobs/{job_id}", response_model=JobOut)
+def get_job(
+    job_id: str,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    job = db.get(Job, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+    succeeded, failed = get_counts(db, job_id)
+    offset = (page - 1) * page_size
+    page_certs = list(
+        db.scalars(
+            select(Certificate)
+            .where(Certificate.job_id == job_id)
+            .order_by(Certificate.created_at, Certificate.id)
+            .offset(offset)
+            .limit(page_size)
+        ).all()
+    )
+    return build_job_out_paged(job, page_certs, succeeded, failed, page, page_size)

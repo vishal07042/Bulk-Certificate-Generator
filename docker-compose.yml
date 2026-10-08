@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: certs
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/certs
+      CERT_DIR: /code/data/certificates
+      MAX_RECIPIENTS: 1000
+      LOG_LEVEL: INFO
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - certdata:/code/data/certificates
+
+volumes:
+  pgdata:
+  certdata:

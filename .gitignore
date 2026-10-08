@@ -11,3 +11,6 @@ certificates/
 *.docx
 .pytest_cache/
 .ruff_cache/
+*.db
+*.sqlite
+*.sqlite-journal

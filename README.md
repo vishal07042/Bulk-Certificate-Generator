@@ -36,8 +36,11 @@ MAX_RECIPIENTS=1000
 LOG_LEVEL=INFO
 ```
 
-Postgres is required. Start it with Compose (`docker compose up db`) or point
-`DATABASE_URL` at your own Postgres 16. SQLite URLs are rejected.
+Postgres is required. Start it with Compose (`docker compose up db`, reachable
+on `localhost:5432`) or point `DATABASE_URL` at your own Postgres 16.
+SQLite URLs are rejected. Note: `.env.example` points at the `db` service host,
+so for local runs outside Compose export
+`DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/certs`.
 
 ## Run the application
 
@@ -55,7 +58,7 @@ docker compose up --build
 # open http://localhost:8000/docs
 ```
 
-- `db`: Postgres 16 with healthcheck, named volume `pgdata`
+- `db`: Postgres 16 with healthcheck, port `5432` published, named volume `pgdata`
 - `api`: waits for healthy db, serves on `:8000`, certificates in volume `certdata`
 
 Health:
@@ -68,6 +71,7 @@ GET /api/v1/health
 ## Run tests
 
 ```bash
+docker compose up -d db   # Postgres must be reachable on localhost:5432
 python -m pytest -q
 python -m ruff check app tests
 ```

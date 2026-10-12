@@ -9,7 +9,7 @@ Source requirements: submit, validate, generate, track status, check progress, r
 | Concern | Choice | Why |
 |---|---|---|
 | Language / framework | Python 3.12, FastAPI | Pydantic validation, auto OpenAPI docs |
-| DB | PostgreSQL 16 (Docker Compose); SQLite for local tests | Real constraints and transactions; `DATABASE_URL` env var switches engines |
+| DB | PostgreSQL 16 everywhere (Docker Compose for dev/review, same engine for tests) | Real constraints and transactions; Postgres-only, non-Postgres `DATABASE_URL`s are rejected |
 | ORM | SQLAlchemy 2.0 | Standard, engine-agnostic |
 | Schema management | `create_all` on startup | Alembic is overkill here; listed under "next steps" |
 | PDF | ReportLab + bundled TTF font | No system deps; TTF for non-Latin names |
@@ -116,7 +116,7 @@ Tests cover the six required areas plus the extras:
 6. Retrieval: single PDF, ZIP, 404 for unknown, 409 for failed cert
 7. Startup recovery: stale `processing` rows get marked `failed`
 
-Tests default to SQLite in-memory via dependency override. CI runs the same suite against a Postgres service container.
+Tests run against PostgreSQL (`TEST_DATABASE_URL`, default `.../certs_test`, auto-created). CI runs the same suite against a Postgres service container.
 
 **CI (GitHub Actions), on push and PR:** checkout, set up Python, install deps, `ruff check`, `pytest` (Postgres service), `docker build`.
 
